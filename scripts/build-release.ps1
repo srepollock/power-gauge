@@ -96,13 +96,21 @@ try {
         }
     }
 
-    # Compute SHA256SUMS.txt
+    # Compute SHA256SUMS.txt using .NET SHA256 (works even when PSModulePath is overridden across pwsh/powershell)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
     $checksumLines = @()
     Get-ChildItem -Path $releaseDir -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" } | ForEach-Object {
-        $hashObj = Get-FileHash -Path $_.FullName -Algorithm SHA256
+        $stream = [System.IO.File]::OpenRead($_.FullName)
+        try {
+            $hashBytes = $sha256.ComputeHash($stream)
+        } finally {
+            $stream.Dispose()
+        }
+        $hashHex = [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
         $sizeMb = [math]::Round($_.Length / 1MB, 2)
-        $checksumLines += "$($hashObj.Hash.ToLower())  $($_.Name)  # $sizeMb MB"
+        $checksumLines += "$hashHex  $($_.Name)  # $sizeMb MB"
     }
+    $sha256.Dispose()
     $checksumPath = Join-Path $releaseDir "SHA256SUMS.txt"
     Set-Content -Path $checksumPath -Value ($checksumLines -join "`r`n")
 
