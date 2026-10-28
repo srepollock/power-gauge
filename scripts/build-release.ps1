@@ -35,7 +35,17 @@ try {
     Write-Host " Building PowerGauge HUD Release v$pkgVer" -ForegroundColor Cyan
     Write-Host "============================================================" -ForegroundColor Cyan
 
-    # 2. Build & Typecheck Frontend (dist/)
+    # 2. Ensure node_modules (including devDependencies like typescript & vite) are installed
+    $tscBin = Join-Path $RepoRoot "node_modules\.bin\tsc.cmd"
+    if (-not (Test-Path $tscBin)) {
+        Write-Host "[0/3] Installing npm dependencies (including devDependencies)..." -ForegroundColor Yellow
+        npm install --include=dev
+        if ($LASTEXITCODE -ne 0) {
+            throw "npm install failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    # 3. Build & Typecheck Frontend (dist/)
     Write-Host "[1/3] Building TypeScript + Vite production frontend bundle..." -ForegroundColor Yellow
     npm run build
     if ($LASTEXITCODE -ne 0) {
