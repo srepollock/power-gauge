@@ -35,7 +35,17 @@ try {
     Write-Host " Building PowerGauge HUD Release v$pkgVer" -ForegroundColor Cyan
     Write-Host "============================================================" -ForegroundColor Cyan
 
-    # 2. Build & Typecheck Frontend (dist/)
+    # 2. Ensure node_modules (including devDependencies like typescript & vite) are installed
+    $tscBin = Join-Path $RepoRoot "node_modules\.bin\tsc.cmd"
+    if (-not (Test-Path $tscBin)) {
+        Write-Host "[0/3] Installing npm dependencies (including devDependencies)..." -ForegroundColor Yellow
+        npm install --include=dev
+        if ($LASTEXITCODE -ne 0) {
+            throw "npm install failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    # 3. Build & Typecheck Frontend (dist/)
     Write-Host "[1/3] Building TypeScript + Vite production frontend bundle..." -ForegroundColor Yellow
     npm run build
     if ($LASTEXITCODE -ne 0) {
@@ -86,13 +96,21 @@ try {
         }
     }
 
-    # Compute SHA256SUMS.txt
+    # Compute SHA256SUMS.txt using .NET SHA256 (works even when PSModulePath is overridden across pwsh/powershell)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
     $checksumLines = @()
     Get-ChildItem -Path $releaseDir -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" } | ForEach-Object {
-        $hashObj = Get-FileHash -Path $_.FullName -Algorithm SHA256
+        $stream = [System.IO.File]::OpenRead($_.FullName)
+        try {
+            $hashBytes = $sha256.ComputeHash($stream)
+        } finally {
+            $stream.Dispose()
+        }
+        $hashHex = [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
         $sizeMb = [math]::Round($_.Length / 1MB, 2)
-        $checksumLines += "$($hashObj.Hash.ToLower())  $($_.Name)  # $sizeMb MB"
+        $checksumLines += "$hashHex  $($_.Name)  # $sizeMb MB"
     }
+    $sha256.Dispose()
     $checksumPath = Join-Path $releaseDir "SHA256SUMS.txt"
     Set-Content -Path $checksumPath -Value ($checksumLines -join "`r`n")
 
