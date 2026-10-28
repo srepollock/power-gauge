@@ -1,0 +1,26 @@
+# Consumer workflow for srepollock/ci-toolkit dependabot-triage.yml
+name: dependabot-triage
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  triage-dependabot:
+    uses: srepollock/ci-toolkit/.github/workflows/dependabot-triage.yml@v0
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+    with:
+      required_checks: "Node CI (typecheck, test, build) & Tauri Rust Suite"
+      max_merges: 5
+      ci_workflow: ci.yml
+      lockfile_reconcile: npm
+    secrets:
+      DEPENDABOT_TOKEN: ${{ secrets.DEPENDABOT_TOKEN }}

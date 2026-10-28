@@ -1,0 +1,27 @@
+# Consumer workflow for srepollock/ci-toolkit ai-agent.yml
+name: ai-agent
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  agent:
+    if: contains(github.event.comment.body, '@claude')
+    uses: srepollock/ci-toolkit/.github/workflows/ai-agent.yml@v0
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    with:
+      provider: claude
+      setup: node
+      max_turns: 50
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
