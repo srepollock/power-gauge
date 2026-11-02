@@ -1,5 +1,5 @@
-# Aligned with srepollock/ci-toolkit consumer conventions:
-# - dependabot-triage@v1 gates on this workflow's run for each PR's head SHA. It does not
+# Conventions shared with the vendored ci-toolkit workflows (reusable-*.yml):
+# - dependabot-triage gates on this workflow's run for each PR's head SHA. It does not
 #   dispatch CI after merges; set DEPENDABOT_MERGE_TOKEN so its merges trigger push CI.
 # - Top-level least-privilege permissions
 # - Runs the node-ci contract (typecheck, test, build) + Tauri Rust check & tests
@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 jobs:
-  # Stays repo-local: ci-toolkit's planned node-ci.yml (1.x) won't cover the Windows + Tauri matrix.
+  # Stays repo-local: no shared workflow covers the Windows + Tauri matrix.
 
   verify-windows:
     name: Node CI (typecheck, test, build) & Tauri Rust Suite

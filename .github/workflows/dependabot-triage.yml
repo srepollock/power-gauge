@@ -1,4 +1,4 @@
-# Consumer workflow for srepollock/ci-toolkit dependabot-triage.yml
+# Caller for the vendored ci-toolkit reusable (reusable-dependabot-triage.yml).
 # Gates on the ci.yml run for each PR's head SHA. Merges land on development,
 # which is Dependabot's target-branch.
 name: dependabot-triage
@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   triage:
-    uses: srepollock/ci-toolkit/.github/workflows/dependabot-triage.yml@v1
+    uses: ./.github/workflows/reusable-dependabot-triage.yml
     permissions:
       contents: write
       pull-requests: write

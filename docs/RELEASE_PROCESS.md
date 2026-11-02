@@ -84,9 +84,9 @@ Get-Content .\release\v0.1.0\SHA256SUMS.txt
 
 ---
 
-### Step 4: Automated Testing & GitHub Actions (`srepollock/ci-toolkit` Integration)
+### Step 4: Automated Testing & GitHub Actions
 
-This repository is configured to follow the conventions and contracts of **[`srepollock/ci-toolkit`](https://github.com/srepollock/ci-toolkit)**:
+The CI, review, triage and Dependabot workflows follow the conventions of `srepollock/ci-toolkit`. Its reusable workflows are vendored into this repo (`.github/workflows/reusable-*.yml`) because ci-toolkit is private:
 
 1. **Automated Unit Test Suites**:
    - **Frontend (`npm test`)**: Runs [`src/utils/telemetryAdapter.test.ts`](../src/utils/telemetryAdapter.test.ts) via Node's native TypeScript test runner, verifying throughput formatting, gauge normalization, `DISK N` mode toggling, and `ETHERNET` dual-needle scaling.
@@ -96,7 +96,7 @@ This repository is configured to follow the conventions and contracts of **[`sre
 3. **GitHub Actions Workflows (`.github/workflows/`)**:
    - **[`ci.yml`](../.github/workflows/ci.yml)**: Runs on `push`, `pull_request`, and `workflow_dispatch`; `dependabot-triage` gates on its run for each Dependabot PR. Uses [`.nvmrc`](../.nvmrc) (`22`), verifies 4-file version parity, runs `npm run typecheck`, `npm test`, `npm run build`, and `cargo test --locked`.
    - **[`release.yml`](../.github/workflows/release.yml)**: Runs `release-please` on `trunk`/`main`, and when `release_created == 'true'` (or on manual `workflow_dispatch`), runs `./scripts/build-release.ps1 -BundleInstallers` to attach the Windows `.exe` / `.msi` installers, portable `.exe`, and `SHA256SUMS.txt` to the GitHub Release.
-   - **[`ai-review.yml`](../.github/workflows/ai-review.yml), [`ai-agent.yml`](../.github/workflows/ai-agent.yml), [`ai-triage.yml`](../.github/workflows/ai-triage.yml), and [`dependabot-triage.yml`](../.github/workflows/dependabot-triage.yml)**: Consumer workflows calling `srepollock/ci-toolkit/.github/workflows/*@v1` with least-privilege permissions and explicit secret mappings (`CLAUDE_CODE_OAUTH_TOKEN`, plus the optional `DEPENDABOT_MERGE_TOKEN` so sweep merges trigger CI). `issues`, `issue_comment`, `schedule` and `workflow_run` triggers only fire from the default branch (`trunk`), and the `re-review` label forces a fresh AI review.
+   - **[`ai-review.yml`](../.github/workflows/ai-review.yml), [`ai-agent.yml`](../.github/workflows/ai-agent.yml), [`ai-triage.yml`](../.github/workflows/ai-triage.yml), and [`dependabot-triage.yml`](../.github/workflows/dependabot-triage.yml)**: Callers of the vendored `reusable-*.yml` workflows (ci-toolkit v1.1.0) with least-privilege permissions and explicit secret mappings (`CLAUDE_CODE_OAUTH_TOKEN`, plus the optional `DEPENDABOT_MERGE_TOKEN` so sweep merges trigger CI). `issues`, `issue_comment`, `schedule` and `workflow_run` triggers only fire from the default branch (`trunk`), and the `re-review` label forces a fresh AI review.
    - **[`dependabot.yml`](../.github/dependabot.yml)**: Automated dependency updates for `github-actions`, `npm`, and `cargo` targeting `development`.
 
 ---

@@ -1,4 +1,4 @@
-# Consumer workflow for srepollock/ci-toolkit ai-agent.yml
+# Caller for the vendored ci-toolkit reusable (reusable-ai-agent.yml).
 # The @claude mention and OWNER/MEMBER/COLLABORATOR gate live in the reusable.
 name: ai-agent
 
@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   agent:
-    uses: srepollock/ci-toolkit/.github/workflows/ai-agent.yml@v1
+    uses: ./.github/workflows/reusable-ai-agent.yml
     permissions:
       contents: write
       pull-requests: write

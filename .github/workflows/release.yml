@@ -1,4 +1,4 @@
-# Follows the srepollock/ci-toolkit release-please + consumer binary packaging pattern:
+# Release pipeline:
 # 1. release-please manages Release PRs on trunk/main and updates package.json,
 #    src-tauri/tauri.conf.json, src-tauri/Cargo.toml, and CHANGELOG.md.
 # 2. When release_created == 'true' (or on manual workflow_dispatch),
@@ -24,8 +24,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Ready to switch to `uses: srepollock/ci-toolkit/.github/workflows/release-please.yml@v0`
-  # once release-please.yml is implemented in srepollock/ci-toolkit.
   release-please:
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
