@@ -1,0 +1,891 @@
+# Vendored from srepollock/ci-toolkit v1.1.0 (58af871), unmodified below this header.
+# ci-toolkit is private and a public repo cannot call its reusable workflows, so this
+# repo keeps its own copy. Called by dependabot-triage.yml; edit here, not upstream.
+# Reusable Dependabot PR triage & auto-merge.
+#
+# Sweeps every open Dependabot PR, decides what each one is waiting on, and
+# merges the ones that are genuinely ready. Everything else is labelled
+# `needs_review_label` and left for a human, with the reason on the PR.
+#
+# CALLER JOB PERMISSIONS (a reusable can only narrow what the caller grants):
+#
+#   permissions:
+#     contents: write       # merge the PR
+#     pull-requests: write  # comment, label
+#     issues: write         # create the triage labels if missing
+#     actions: read         # read the ci run conclusion for a head SHA
+#     checks: read          # read every check run on that SHA
+#     statuses: read        # read commit statuses
+#
+# EXAMPLE CALLER (triggers and concurrency belong to the caller):
+#
+#   on:
+#     workflow_run: { workflows: [ci], types: [completed], branches: ["dependabot/**"] }
+#     schedule: [{ cron: "0 13 * * *" }]
+#     workflow_dispatch:
+#   concurrency: { group: dependabot-triage, cancel-in-progress: false }
+#   jobs:
+#     triage:
+#       permissions: { ...as above }
+#       uses: srepollock/ci-toolkit/.github/workflows/dependabot-triage.yml@v1
+#       secrets: { DEPENDABOT_MERGE_TOKEN: "${{ secrets.DEPENDABOT_MERGE_TOKEN }}" }
+#
+# WHY THE CALLER'S TRIGGERS SHOULD LOOK LIKE THAT
+#
+#   - workflow_run, not pull_request: a Dependabot `pull_request` run gets a
+#     read-only GITHUB_TOKEN and could never merge. workflow_run runs in the
+#     default branch's context with the caller's permissions.
+#   - Serialise the group and never cancel in progress: two concurrent sweeps
+#     race on the same PR, and losing a run halfway through a merge leaves
+#     state a later run has to reason about.
+#   - Add a daily cron backstop. A hold lifted, an allow-major label applied or
+#     a conflict resolved by a human produces no new ci run on a dependabot
+#     branch, so nothing else would wake the sweep, and `waiting` verdicts
+#     carry no label by design.
+#
+# BURST SWEEP: Dependabot opens its grouped PRs minutes apart, so several ci
+# runs finish together and the concurrency group drops most of the wakes. That
+# is why every wake sweeps EVERY open Dependabot PR rather than just the one
+# whose ci fired it: whichever run survives the burst still covers all of them.
+#
+# NO CONCLUSION GATE: the caller should not gate on
+# `github.event.workflow_run.conclusion == 'success'`. Concurrency is evaluated
+# when the run is created, before any job `if`, so a skipped run has already
+# joined the group and can have cancelled the pending run that had PRs to
+# sweep. A wake with nothing to do exits in seconds.
+#
+# WHAT IT WILL NOT DO
+#   - Merge anything whose `ci_workflow` run for the CURRENT head SHA did not
+#     conclude `success` (absent is not green), or whose `required_checks` are
+#     not all green.
+#   - Merge a major bump unless the head ref matches `majors_ok_branch_pattern`
+#     or a human applied `allow_major_label`.
+#   - Merge a bump to an action in `cannot_vouch_for`: ci never exercises it.
+#   - Merge a held, draft, conflicted or changes-requested PR, or one with any
+#     other failing/pending check.
+#
+# DETAILS-STRIPPING: version parsing ignores <details> blocks (upstream release
+# notes). If the blocks are unbalanced the parse FAILS OPEN for majors (the
+# versions are always stated above the first block) but FAILS CLOSED for
+# `cannot_vouch_for` (the raw body is scanned instead).
+#
+# GITHUB_TOKEN CAVEAT: a merge made with the repository GITHUB_TOKEN does not
+# trigger `push` workflows, so ci and release automation do not see the merge
+# until the next human push. Pass a PAT or App token with contents, pull
+# requests and issues write as the optional `DEPENDABOT_MERGE_TOKEN` secret to
+# close that gap; without it the workflow falls back to GITHUB_TOKEN.
+name: dependabot-triage
+
+on:
+  workflow_call:
+    inputs:
+      ci_workflow:
+        description: Workflow file whose run for the head SHA must be green
+        type: string
+        default: ci.yml
+      hold_label:
+        description: Label that makes triage leave a PR alone
+        type: string
+        default: dependabot-hold
+      allow_major_label:
+        description: Label that allows a major bump or an unvouched action to merge
+        type: string
+        default: dependabot-allow-major
+      needs_review_label:
+        description: Label applied to PRs a human has to resolve
+        type: string
+        default: dependabot-needs-review
+      majors_ok_branch_pattern:
+        description: Regex on the head ref; matching PRs may merge major bumps. Empty disables the carve-out.
+        type: string
+        default: ^dependabot/github_actions/
+      cannot_vouch_for:
+        description: Comma-separated action names whose bumps ci cannot validate
+        type: string
+        default: anthropics/claude-code-action,google-github-actions/run-gemini-cli,actions/github-script
+      stuck_after_days:
+        description: Days a PR may sit in `waiting` before it is escalated
+        type: number
+        default: 7
+      merge_method:
+        description: One of merge, squash or rebase
+        type: string
+        default: squash
+      required_checks:
+        description: Comma-separated check run names or commit status contexts that must be green
+        type: string
+        default: ''
+      dry_run:
+        description: Log and summarise decisions without merging, commenting or labelling
+        type: boolean
+        default: false
+    secrets:
+      DEPENDABOT_MERGE_TOKEN:
+        description: PAT or App token so merges trigger downstream workflows (falls back to GITHUB_TOKEN)
+        required: false
+
+permissions:
+  contents: write # merge the PR
+  pull-requests: write # comment, label
+  issues: write # create the triage labels if they don't exist yet
+  actions: read # read the ci run conclusion for a head SHA
+  checks: read # read every check run on that SHA
+  statuses: read # read commit statuses
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # No checkout: every input is an API read. The script is the whole job.
+      - name: Triage open Dependabot PRs
+        uses: actions/github-script@v9
+        env:
+          CI_WORKFLOW: ${{ inputs.ci_workflow }}
+          HOLD_LABEL: ${{ inputs.hold_label }}
+          ALLOW_MAJOR_LABEL: ${{ inputs.allow_major_label }}
+          NEEDS_REVIEW_LABEL: ${{ inputs.needs_review_label }}
+          MAJORS_OK_BRANCH_PATTERN: ${{ inputs.majors_ok_branch_pattern }}
+          CANNOT_VOUCH_FOR: ${{ inputs.cannot_vouch_for }}
+          STUCK_AFTER_DAYS: ${{ inputs.stuck_after_days }}
+          MERGE_METHOD: ${{ inputs.merge_method }}
+          REQUIRED_CHECKS: ${{ inputs.required_checks }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        with:
+          # An undefined secret is the empty string, which `||` treats as false.
+          github-token: ${{ secrets.DEPENDABOT_MERGE_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+
+            function splitList(value) {
+              return (value || '').split(',').map((s) => s.trim()).filter(Boolean);
+            }
+
+            const BOT = 'dependabot[bot]';
+            const REQUIRED_WORKFLOW = process.env.CI_WORKFLOW;
+
+            const HOLD_LABEL = process.env.HOLD_LABEL;
+            const ALLOW_MAJOR_LABEL = process.env.ALLOW_MAJOR_LABEL;
+            const NEEDS_REVIEW_LABEL = process.env.NEEDS_REVIEW_LABEL;
+
+            const MERGE_METHOD = process.env.MERGE_METHOD;
+            const DRY_RUN = process.env.DRY_RUN === 'true';
+            const REQUIRED_CHECKS = splitList(process.env.REQUIRED_CHECKS);
+
+            if (!['merge', 'squash', 'rebase'].includes(MERGE_METHOD)) {
+              core.setFailed(`merge_method must be one of merge|squash|rebase, got \`${MERGE_METHOD}\``);
+              return;
+            }
+
+            // Every action in this repo is pinned to a floating `@vN`, so the
+            // only update Dependabot can ever propose there is a major. Holding
+            // those back would make the `actions` group permanently manual,
+            // which is the opposite of the point — and an action bump is gated
+            // by the same ci run as everything else. Every other ecosystem
+            // resolves real semver, so a major there means a real major.
+            // Empty means "no carve-out". `new RegExp('')` would match every
+            // branch and auto-merge every major.
+            const MAJORS_OK_FROM = process.env.MAJORS_OK_BRANCH_PATTERN
+              ? new RegExp(process.env.MAJORS_OK_BRANCH_PATTERN)
+              : /(?!)/;
+
+            // ...with one carve-out, and the criterion is narrower than it
+            // first looks. ci.yml runs python, dashboard and docs, so it does
+            // not exercise the docker/* actions (publish-images.yml),
+            // release-please-action (release.yml), or the actions the claude-*
+            // and gemini-* workflows call. Green ci says nothing about any of
+            // them — but for most, a bad version fails LOUDLY the next time
+            // that workflow runs: a red release job, a failed image push, with
+            // the offending bump sitting right there in git log. Loud and
+            // late is survivable, and holding all of them would leave the
+            // actions group permanently manual, which is what MAJORS_OK_FROM
+            // exists to avoid.
+            //
+            // The list below is the actions where that reasoning breaks: the
+            // failure is SILENT and it lands on a safety gate.
+            // claude-review.yml's own header records that claude-code-action
+            // can exit 0 having posted nothing at all — so a bad version does
+            // not go red, it quietly stops reviewing, and PRs sail through a
+            // gate that is no longer there. Nothing surfaces that. Same shape
+            // for the gemini action.
+            //
+            // Held for a human rather than added to dependabot.yml's `ignore`:
+            // the bump should still be proposed and still be easy to take, it
+            // just should not land unattended. Matched against the proposal
+            // text, so a group PR carrying one waits even though every other
+            // action bump in it would have been fine on its own.
+            const CI_CANNOT_VOUCH_FOR = splitList(process.env.CANNOT_VOUCH_FOR);
+
+            // How long a `waiting` verdict may stay silent before it stops
+            // being silence and starts being a PR nobody knows is stuck.
+            const STUCK_AFTER_DAYS = Number(process.env.STUCK_AFTER_DAYS);
+
+            // ---------------------------------------------------------------
+            // Reads
+            // ---------------------------------------------------------------
+
+            // Every open PR, on every wake — including a workflow_run wake,
+            // which is NOT narrowed to the branch whose ci just finished. See
+            // the header: the concurrency group drops most wakes in a
+            // five-PR Dependabot burst, so a run that only looked at its own
+            // triggering branch would leave the rest untriaged until the next
+            // scheduled sweep. Sweeping everything makes each surviving run
+            // sufficient, and costs a couple of API reads on a repo with a
+            // handful of open PRs.
+            async function candidatePulls() {
+              return github.paginate(github.rest.pulls.list, {
+                owner, repo, state: 'open', per_page: 100,
+              });
+            }
+
+            // The gate. `missing` is deliberately distinct from `failure`: a PR
+            // whose ci never ran must not read as green just because nothing is
+            // red. A single run's conclusion is authoritative because re-runs
+            // update the run in place rather than creating a second one, so
+            // "any failure for this SHA" cannot be a stale first attempt.
+            async function ciVerdict(sha) {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id: REQUIRED_WORKFLOW, head_sha: sha, per_page: 20,
+              });
+              const runs = data.workflow_runs;
+              if (!runs.length) return 'missing';
+              if (runs.some((r) => r.status !== 'completed')) return 'pending';
+              if (runs.some((r) => ['failure', 'timed_out', 'action_required'].includes(r.conclusion))) {
+                return 'failure';
+              }
+              if (runs.some((r) => r.conclusion === 'success')) return 'success';
+              // `cancelled` is an ABSENT verdict, not a red one. ci.yml
+              // cancels superseded runs and a run can be cancelled by hand,
+              // either of which can leave a head SHA whose only run has no
+              // conclusion. Calling that `blocked` would label the PR for a
+              // state that says nothing about the PR — and the comment marker
+              // is keyed to the SHA, so it could not even be repeated once the
+              // situation cleared. Kept distinct from `missing` so the summary
+              // can still say which of the two it was.
+              if (runs.every((r) => r.conclusion === 'cancelled')) return 'cancelled';
+              return runs[0].conclusion || 'unknown';
+            }
+
+            // Belt and braces around ciVerdict: anything else that reports on
+            // this SHA (review-gate today, whatever gets added later) also has
+            // to be settled and non-red. ci.yml skips its `dashboard` job on
+            // PRs that don't touch dashboard/, and claude-review.yml skips
+            // `review` on bot PRs, so `skipped` and `neutral` are normal here
+            // and must not be read as failures.
+            async function fetchChecks(sha) {
+              const runs = await github.paginate(github.rest.checks.listForRef, {
+                owner, repo, ref: sha, per_page: 100,
+              });
+              const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
+                owner, repo, ref: sha, per_page: 100,
+              });
+              const newest = new Map();
+              for (const s of statuses) if (!newest.has(s.context)) newest.set(s.context, s.state);
+              return { runs, newest };
+            }
+
+            function otherChecks({ runs, newest }) {
+              const blocking = [];
+              for (const run of runs) {
+                if (run.status !== 'completed') {
+                  blocking.push(`${run.name} (${run.status})`);
+                } else if (!['success', 'skipped', 'neutral'].includes(run.conclusion)) {
+                  blocking.push(`${run.name} (${run.conclusion})`);
+                }
+              }
+              for (const [ctx, state] of newest) {
+                if (state !== 'success') blocking.push(`${ctx} (${state})`);
+              }
+              return blocking;
+            }
+
+            // Each name in `required_checks` must be satisfied by a check run
+            // with exactly that name or a commit status with exactly that
+            // context. A satisfied source wins over a red one, because the
+            // caller only asked for the name to be green somewhere. Absent
+            // and still-running both read `waiting`; only a settled non-green
+            // result is `blocked`.
+            function requiredCheckProblems({ runs, newest }) {
+              const waiting = [];
+              const failed = [];
+              for (const name of REQUIRED_CHECKS) {
+                const states = runs
+                  .filter((r) => r.name === name)
+                  .map((r) => {
+                    if (r.status !== 'completed') return { ok: false, settling: true, label: `${name} (${r.status})` };
+                    const ok = ['success', 'skipped', 'neutral'].includes(r.conclusion);
+                    return { ok, settling: false, label: `${name} (${r.conclusion})` };
+                  });
+                if (newest.has(name)) {
+                  const state = newest.get(name);
+                  states.push({
+                    ok: state === 'success',
+                    settling: state === 'pending',
+                    label: `${name} (${state})`,
+                  });
+                }
+                if (!states.length) waiting.push(`${name} (missing)`);
+                else if (states.some((s) => s.ok)) continue;
+                else if (states.some((s) => s.settling)) waiting.push(states.find((s) => s.settling).label);
+                else failed.push(states[0].label);
+              }
+              return { waiting, failed };
+            }
+
+            async function changesRequested(number) {
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
+                owner, repo, pull_number: number, per_page: 100,
+              });
+              // `r.user` is null for a review left by a since-deleted account.
+              // Collapsing those onto one key keeps "latest state per author"
+              // roughly intact without throwing on the property access.
+              const latest = new Map();
+              for (const r of reviews) {
+                if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(r.state)) {
+                  latest.set((r.user && r.user.login) || '(deleted account)', r.state);
+                }
+              }
+              return [...latest.values()].includes('CHANGES_REQUESTED');
+            }
+
+            // ---------------------------------------------------------------
+            // Version classification
+            // ---------------------------------------------------------------
+
+            // Dependabot writes the same sentence two ways: "Bumps [foo](url)
+            // from A to B." for a lone dependency, and one "Updates `foo` from
+            // A to B" block per member of a group. The second pattern picks up
+            // the summary table some grouped bodies carry instead. A grouped PR
+            // counts as a major bump if ANY member is one.
+            // What this PR actually proposes, with the <details> blocks gone.
+            // Dependabot folds each dependency's release notes, changelog and
+            // commit list into them, and those carry version numbers, markdown
+            // tables and other projects' names — upstream's history, not this
+            // PR's proposal. Reading them would let someone else's "2.0.0"
+            // flag a patch-only bump as major, or a changelog that merely
+            // mentions an action hold a PR that never touches it. The
+            // "Updates `x` from A to B" lines sit BETWEEN the blocks rather
+            // than inside them, so removing balanced regions keeps every
+            // dependency in a grouped PR.
+            //
+            // Depth-tracked, not `/<details>[\s\S]*?<\/details>/g`. That regex
+            // is non-greedy, so on a nested block it matches from the outer
+            // opener to the INNER closer and leaves the rest of the outer
+            // block — changelog tables and all — exposed to the parser.
+            // Nesting is routine: Dependabot embeds upstream release bodies
+            // verbatim, and those carry their own "Full changelog" folds.
+            // Depth tracking also lets an opener carry attributes
+            // (`<details open>`, `<details markdown="1">`), which a literal-tag
+            // match skipped entirely. Splitting on a capturing regex keeps the
+            // tags as tokens; String.split applies it globally regardless of
+            // the missing `g` flag.
+            //
+            // An unclosed <details> leaves depth above zero and drops the rest
+            // of the body — and which direction that fails in DEPENDS ON THE
+            // CALLER, so this returns `balanced` rather than pretending one
+            // answer fits both.
+            //
+            // majorBumps keeps the stripped text unconditionally. Not because
+            // dropping is safe in the abstract — an unreviewed major merging on
+            // ci green is exactly what that gate exists to prevent — but
+            // because it is unreachable in a real body and the alternative is
+            // expensive. Dependabot always states the versions ABOVE the first
+            // <details>: the `Bumps [x](url) from A to B.` line for a lone
+            // dependency, the summary table for a group. A truncated tail
+            // therefore costs only redundancy. Falling back to the raw body
+            // here would instead parse every upstream changelog table and flag
+            // nearly every such PR as a major.
+            //
+            // CI_CANNOT_VOUCH_FOR can afford that fallback precisely because it
+            // matches three literal action names rather than a version grammar,
+            // so scanning raw text costs it almost no false positives — and it
+            // needs the fallback, because its premise is that ci green is NOT
+            // evidence, so dropped text there means merging the very bump the
+            // check exists to hold. That caller reads `balanced`.
+            function proposalText(body) {
+              const kept = [];
+              let depth = 0;
+              for (const token of (body || '').split(/(<details[^>]*>|<\/details>)/i)) {
+                if (/^<details[^>]*>$/i.test(token)) { depth += 1; continue; }
+                if (/^<\/details>$/i.test(token)) { depth = Math.max(0, depth - 1); continue; }
+                if (depth === 0) kept.push(token);
+              }
+              return { text: kept.join(''), balanced: depth === 0 };
+            }
+
+            function versionPairs(body) {
+              const proposal = proposalText(body).text;
+              const pairs = [];
+              const patterns = [
+                /(?:Bumps|Updates)\s+(?:\[[^\]]+\]\([^)]*\)|`[^`]+`|[^\s`]+)\s+from\s+(\S+)\s+to\s+(\S+)/g,
+                /^\|[^|]+\|\s*([^\s|]+)\s*\|\s*([^\s|]+)\s*\|/gm,
+              ];
+              // Trim the markdown the version is wrapped in — the trailing
+              // full stop of "from 8.3.4 to 9.0.0." and the backticks a table
+              // cell puts around it — so both the comparison and the text that
+              // ends up in the PR comment see the bare version.
+              const clean = (v) => v.replace(/[`'"]/g, '').replace(/[.,;:)\]]+$/, '');
+              for (const re of patterns) {
+                for (const m of proposal.matchAll(re)) {
+                  pairs.push([clean(m[1]), clean(m[2])]);
+                }
+              }
+              return pairs;
+            }
+
+            // Leading numeric component of a version-shaped string, or null.
+            //
+            // The null matters more than the number. Docker updates here are
+            // digest refreshes on a pinned tag (see dependabot.yml), and a
+            // short digest that happens to start with a digit — `1a2b3c4` to
+            // `9f8e7d6` — would read as 1 → 9 and flag the one PR we most want
+            // merged. So the whole string has to look like a version before any
+            // comparison happens: digits and dots, optionally `v`-prefixed,
+            // optionally with a `-slim`/`+build` style suffix.
+            function majorOf(version) {
+              const m = /^v?(\d+)(?:\.\d+)*(?:[-+].*)?$/.exec(String(version));
+              return m ? Number(m[1]) : null;
+            }
+
+            function majorBumps(body) {
+              return versionPairs(body)
+                .filter(([from, to]) => {
+                  const a = majorOf(from);
+                  const b = majorOf(to);
+                  return a !== null && b !== null && b > a;
+                })
+                .map(([from, to]) => `${from} → ${to}`);
+            }
+
+            // ---------------------------------------------------------------
+            // Writes
+            // ---------------------------------------------------------------
+
+            // Best effort, deliberately. These three calls run before the
+            // loop, which makes them the one part of the script the per-PR
+            // guard does not cover — an unhandled rejection here costs every
+            // PR its triage before a single one is read. And it is reachable
+            // through the documented happy path, not a freak API error:
+            // creating a repo label is an Issues write, so a fine-grained PAT
+            // in DEPENDABOT_MERGE_TOKEN granted only the contents +
+            // pull_requests permissions this file used to name would 403 here.
+            // (The permissions block above covers GITHUB_TOKEN; it says
+            // nothing about a PAT.)
+            //
+            // The trade is lopsided. A label that cannot be created costs one
+            // failed addLabels later, and the reason for the decision still
+            // reaches the PR as a comment. An aborted sweep costs the batch.
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+                return;
+              } catch (err) {
+                if (err.status !== 404) {
+                  core.warning(`could not read label \`${name}\`: ${err.status} ${err.message}`);
+                  return;
+                }
+              }
+              if (DRY_RUN) {
+                core.info(`[dry run] would create label \`${name}\``);
+                return;
+              }
+              try {
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+              } catch (err) {
+                core.warning(`could not create label \`${name}\`: ${err.status} ${err.message}`);
+              }
+            }
+
+            // Every comment carries an HTML marker keyed to the head SHA, so a
+            // sweep running every day says each thing once — but a NEW head
+            // commit (a rebase, a fresh push) is a new situation and gets to
+            // speak again.
+            async function commentOnce(number, marker, body) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: number, per_page: 100,
+              });
+              if (comments.some((c) => (c.body || '').includes(marker))) return false;
+              if (DRY_RUN) {
+                core.info(`[dry run] would comment on #${number}: ${body.split('\n')[0]}`);
+                return true;
+              }
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: number, body: `${marker}\n${body}`,
+              });
+              return true;
+            }
+
+            async function setNeedsReview(pr, on) {
+              const has = pr.labels.some((l) => l.name === NEEDS_REVIEW_LABEL);
+              if (DRY_RUN) {
+                if (on && !has) core.info(`[dry run] would add \`${NEEDS_REVIEW_LABEL}\` to #${pr.number}`);
+                if (!on && has) core.info(`[dry run] would remove \`${NEEDS_REVIEW_LABEL}\` from #${pr.number}`);
+                return;
+              }
+              if (on && !has) {
+                await github.rest.issues.addLabels({
+                  owner, repo, issue_number: pr.number, labels: [NEEDS_REVIEW_LABEL],
+                });
+              } else if (!on && has) {
+                await github.rest.issues.removeLabel({
+                  owner, repo, issue_number: pr.number, name: NEEDS_REVIEW_LABEL,
+                }).catch((err) => { if (err.status !== 404) throw err; });
+              }
+            }
+
+            // ---------------------------------------------------------------
+            // Triage
+            // ---------------------------------------------------------------
+
+            // Returns { verdict, detail, needsReview } — needsReview drives the
+            // label, so it is true only for states a human has to resolve, not
+            // for "ci is still running".
+            async function classify(pr) {
+              const labels = pr.labels.map((l) => l.name);
+              if (labels.includes(HOLD_LABEL)) {
+                return { verdict: 'held', detail: `\`${HOLD_LABEL}\` applied`, needsReview: false };
+              }
+              if (pr.draft) return { verdict: 'draft', detail: 'draft PR', needsReview: false };
+
+              const sha = pr.head.sha;
+              const ci = await ciVerdict(sha);
+              if (ci === 'pending') return { verdict: 'waiting', detail: 'ci still running', needsReview: false };
+              if (ci === 'missing') {
+                return { verdict: 'waiting', detail: `no ${REQUIRED_WORKFLOW} run for ${sha.slice(0, 7)}`, needsReview: false };
+              }
+              if (ci === 'cancelled') {
+                return {
+                  verdict: 'waiting',
+                  detail: `ci for ${sha.slice(0, 7)} was cancelled — no verdict to act on`,
+                  needsReview: false,
+                };
+              }
+              if (ci !== 'success') return { verdict: 'blocked', detail: `ci concluded \`${ci}\``, needsReview: true };
+
+              const checks = await fetchChecks(sha);
+
+              const required = requiredCheckProblems(checks);
+              if (required.failed.length) {
+                return {
+                  verdict: 'blocked',
+                  detail: `required checks: ${required.failed.join(', ')}`,
+                  needsReview: true,
+                };
+              }
+              if (required.waiting.length) {
+                return {
+                  verdict: 'waiting',
+                  detail: `required checks: ${required.waiting.join(', ')}`,
+                  needsReview: false,
+                };
+              }
+
+              const blocking = otherChecks(checks);
+              if (blocking.length) {
+                const settling = blocking.every((b) => /\((queued|in_progress|waiting|requested|pending)\)$/.test(b));
+                return {
+                  verdict: settling ? 'waiting' : 'blocked',
+                  detail: `checks: ${blocking.join(', ')}`,
+                  needsReview: !settling,
+                };
+              }
+
+              if (await changesRequested(pr.number)) {
+                return { verdict: 'blocked', detail: 'a reviewer requested changes', needsReview: true };
+              }
+
+              // `mergeable` is computed asynchronously and comes back null
+              // while GitHub is still working it out — that is "ask again",
+              // not "no".
+              let detailed = (await github.rest.pulls.get({ owner, repo, pull_number: pr.number })).data;
+              if (detailed.mergeable === null) {
+                await new Promise((r) => setTimeout(r, 5000));
+                detailed = (await github.rest.pulls.get({ owner, repo, pull_number: pr.number })).data;
+              }
+              if (detailed.mergeable === null) {
+                return { verdict: 'waiting', detail: 'mergeability not computed yet', needsReview: false };
+              }
+              if (detailed.mergeable === false || detailed.mergeable_state === 'dirty') {
+                return { verdict: 'conflicted', detail: 'merge conflict with main', needsReview: true };
+              }
+
+              const majors = majorBumps(pr.body);
+              if (majors.length && !MAJORS_OK_FROM.test(pr.head.ref) && !labels.includes(ALLOW_MAJOR_LABEL)) {
+                return {
+                  verdict: 'major',
+                  detail: `major bump(s): ${majors.join(', ')}`,
+                  needsReview: true,
+                };
+              }
+
+              // Deliberately fails CLOSED, unlike majorBumps above. If the
+              // <details> strip could not balance it dropped the rest of the
+              // body, and an action named in the dropped part would sail
+              // through the one gate that exists precisely because ci cannot
+              // vouch for it. Scanning the raw body then costs at worst a PR
+              // held for a human because an upstream changelog mentioned the
+              // action; the other way costs an unreviewed bump to this
+              // workflow's own runtime.
+              const proposal = proposalText(pr.body);
+              const scanned = proposal.balanced ? proposal.text : (pr.body || '');
+              const unvouched = CI_CANNOT_VOUCH_FOR.filter((a) => scanned.includes(a));
+              if (unvouched.length && !labels.includes(ALLOW_MAJOR_LABEL)) {
+                return {
+                  verdict: 'unvouched',
+                  detail: `ci never runs ${unvouched.join(', ')}, so green says nothing about this bump`,
+                  needsReview: true,
+                };
+              }
+
+              // `behind` is deliberately mergeable here. main has no
+              // required-up-to-date rule, and asking for a rebase every time
+              // main moves would spend a full ci run per push to no end; a
+              // semantic conflict that a stale base hides is caught by ci on
+              // main. Only a real conflict (`dirty`, above) stops the merge.
+              return { verdict: 'merge', detail: `ci green on ${sha.slice(0, 7)}`, needsReview: false };
+            }
+
+            // `waiting` deliberately carries no label and no comment: the
+            // usual causes — ci still running, mergeability not yet computed —
+            // clear themselves within minutes, and labelling those would be
+            // noise on every sweep. Two of them do not clear. A head whose only
+            // ci run was cancelled by hand never gets another one, and a
+            // third-party check left permanently pending never settles. Both
+            // park a PR in `waiting` forever with nothing on it to notice,
+            // which is the same silent-forever shape as a swallowed merge
+            // failure. After a week, say it once.
+            //
+            // Keyed on the PR's age rather than the head commit's, to avoid a
+            // second API call per PR. A rebase resets the head but not
+            // created_at, so an old PR briefly mid-ci can be flagged — that
+            // costs one comment and self-heals, since the next sweep drops the
+            // label as soon as the verdict moves off `waiting`.
+            function escalateIfStuck(pr, decision) {
+              if (decision.verdict !== 'waiting') return decision;
+              const ageDays = (Date.now() - new Date(pr.created_at).getTime()) / 86400000;
+              if (!(ageDays >= STUCK_AFTER_DAYS)) return decision;
+              return {
+                verdict: 'stuck',
+                detail: `${decision.detail} — and has been waiting ${Math.floor(ageDays)} days`,
+                needsReview: true,
+              };
+            }
+
+            // What the Action column says: past tense for a real run, a
+            // conditional for a dry run that touched nothing.
+            function outcome(done, would) {
+              return DRY_RUN ? `would ${would}` : done;
+            }
+
+            async function act(pr, decision) {
+              const sha = pr.head.sha;
+
+              // Dependabot acts on `@dependabot rebase` from an account with
+              // write access, which this token has. If it ever doesn't take,
+              // the PR still ends up labelled below — a conflicted PR waiting
+              // on a human is the same outcome, just slower.
+              if (decision.verdict === 'conflicted') {
+                await commentOnce(
+                  pr.number,
+                  `<!-- dependabot-triage:rebase:${sha} -->`,
+                  '@dependabot rebase\n\n' +
+                  'This PR conflicts with `main`, so triage asked Dependabot to rebase it. ' +
+                  'It will be re-triaged automatically once ci finishes on the new head.',
+                );
+                return outcome('asked Dependabot to rebase', 'ask Dependabot to rebase');
+              }
+
+              if (decision.verdict === 'merge' && DRY_RUN) {
+                core.info(`[dry run] would ${MERGE_METHOD}-merge #${pr.number} at ${sha.slice(0, 7)}`);
+                return outcome('merged', 'merge');
+              }
+
+              if (decision.verdict === 'merge') {
+                try {
+                  await github.rest.pulls.merge({
+                    owner, repo,
+                    pull_number: pr.number,
+                    sha, // refuses if the head moved since we read it
+                    merge_method: MERGE_METHOD,
+                    // The PR title is the conventional commit that drives the
+                    // changelog (CONTRIBUTING.md). An empty body keeps
+                    // Dependabot's release-notes dump out of main's history.
+                    commit_title: `${pr.title} (#${pr.number})`,
+                    commit_message: '',
+                  });
+                  return 'merged';
+                } catch (err) {
+                  // Everything said ready and the API still said no — squash
+                  // merging disabled, a protection rule, the head moving under
+                  // us. That is a standing problem, not a transient one, and
+                  // it must not end here: returning a string would leave the
+                  // verdict at `merge`, so the loop's setNeedsReview(false)
+                  // would REMOVE any existing label and the next six sweeps
+                  // would retry in silence. Rewrite the decision instead and
+                  // fall through to the flagging below, so the PR gets the
+                  // label and one comment saying what the API said.
+                  // Its own verdict, not `blocked`. This is the one place a
+                  // verdict is REWRITTEN rather than derived, and the
+                  // needs-review marker is keyed on the verdict — so reusing a
+                  // name already in use lets an earlier `blocked` comment on
+                  // this same SHA suppress this one. Worse, that earlier cause
+                  // (a red check, a changes-requested review) must have
+                  // CLEARED for `merge` to have been reached at all, so the
+                  // reason left on the PR would be guaranteed stale.
+                  //
+                  // `refused` falls into the generic nextStep branch, which is
+                  // right for it: fix the squash setting or the protection
+                  // rule and the next sweep does merge.
+                  decision.verdict = 'refused';
+                  decision.needsReview = true;
+                  decision.detail = `merge refused by the API: ${err.status} ${err.message}`;
+                  core.warning(`#${pr.number}: ${decision.detail}`);
+                }
+              }
+
+              if (decision.needsReview) {
+                // This comment is the whole human-facing output of the
+                // workflow — the triage table goes to the job summary, not to
+                // the PRs — so it has to name a way forward that fits the
+                // verdict. "Resolve the blocker" is right for a red ci run or
+                // a changes-requested review. It is meaningless for `major`
+                // and `unvouched`, where the bump IS the finding: there is
+                // nothing to fix, and the one label that clears them would go
+                // unmentioned while the only label named, HOLD, does the
+                // opposite of what the reader wants.
+                const nextStep = ['major', 'unvouched'].includes(decision.verdict)
+                  ? `- review the change and apply \`${ALLOW_MAJOR_LABEL}\` to let triage merge it, or merge it yourself;\n`
+                  : decision.verdict === 'stuck'
+                    // `stuck` is reached precisely BECAUSE no new verdict is
+                    // coming: its motivating case is a head whose only ci run
+                    // was cancelled by hand, which nothing will replace. So
+                    // both halves of the generic line are false here — there
+                    // is no blocker to resolve, and the next triage run
+                    // re-derives the same verdict for as long as the PR is
+                    // open. Name the two things that actually move it.
+                    ? `- re-run \`${REQUIRED_WORKFLOW}\` for \`${sha.slice(0, 7)}\`, or comment \`@dependabot recreate\`, to give triage a verdict to act on;\n`
+                    : '- resolve the blocker and the next triage run will pick it up;\n';
+                await commentOnce(
+                  pr.number,
+                  // Keyed on the VERDICT as well as the SHA. classify()
+                  // short-circuits in order — ci, then other checks, then
+                  // reviews, then conflict, then major, then unvouched — so
+                  // clearing an early blocker on an unchanged head reveals a
+                  // later one, and a SHA-only key would suppress the new
+                  // explanation and leave the PR showing a reason that is no
+                  // longer true. Re-running a red companion check is exactly
+                  // the ordinary action the daily backstop exists to notice.
+                  //
+                  // Verdict granularity, not detail granularity: two different
+                  // failing checks are still "a check is failing" and should
+                  // not each earn a comment.
+                  `<!-- dependabot-triage:needs-review:${decision.verdict}:${sha} -->`,
+                  `Automerge declined for \`${sha.slice(0, 7)}\`: ${decision.detail}.\n\n` +
+                  `Labelled \`${NEEDS_REVIEW_LABEL}\`. From here:\n\n` +
+                  nextStep +
+                  `- or apply \`${HOLD_LABEL}\` to stop triage from touching this PR.`,
+                );
+                return outcome('flagged for review', 'flag for review');
+              }
+
+              return 'no action';
+            }
+
+            // ---------------------------------------------------------------
+            // Sweep
+            // ---------------------------------------------------------------
+
+            await ensureLabel(NEEDS_REVIEW_LABEL, 'd93f0b', 'Dependabot PR that automerge would not take');
+            await ensureLabel(HOLD_LABEL, 'fbca04', 'Never automerge this Dependabot PR');
+            await ensureLabel(ALLOW_MAJOR_LABEL, '0e8a16', 'Automerge this Dependabot PR despite a major bump or an unvouched action');
+
+            const pulls = (await candidatePulls()).filter((pr) => pr.user && pr.user.login === BOT);
+
+            if (!pulls.length) {
+              core.summary.addRaw(DRY_RUN ? 'DRY RUN: no open Dependabot PRs to triage.' : 'No open Dependabot PRs to triage.');
+              await core.summary.write();
+              return;
+            }
+
+            const rows = [[
+              { data: 'PR', header: true },
+              { data: 'Verdict', header: true },
+              { data: 'Why', header: true },
+              { data: 'Action', header: true },
+            ]];
+
+            for (const pr of pulls) {
+              // Isolated per PR, and that matters more now that every wake
+              // sweeps the whole batch: an unguarded throw on the
+              // lowest-numbered PR would cost all the others their triage, and
+              // the run would fail without the summary ever saying which ones
+              // were missed. A 403 on a label write, a transient 5xx, an
+              // unforeseen shape in an API payload — one bad row, not a lost
+              // sweep.
+              let decision = { verdict: 'error', detail: '', needsReview: false };
+              let action = 'no action';
+              try {
+                decision = escalateIfStuck(pr, await classify(pr));
+                action = await act(pr, decision);
+              } catch (err) {
+                decision.verdict = 'error';
+                decision.detail = `triage threw: ${err.status || ''} ${err.message}`.trim();
+                action = 'skipped';
+                core.warning(`#${pr.number}: ${decision.detail}`);
+              }
+
+              // Guarded separately from classify/act, deliberately. A failed
+              // label write means the LABEL is wrong — not that triage reached
+              // no decision. Inside the catch above it would overwrite a
+              // verdict already reached AND already acted on: a PR whose merge
+              // commit is on main would be recorded `error`/`skipped` and, via
+              // the check below, would fail the run saying triage "reached no
+              // decision" about a commit that already shipped. An operator
+              // would then go looking for an untriaged PR that does not exist.
+              //
+              // act() has already put the reason on the PR by this point, so a
+              // warning is the whole cost of losing the label write. Skipped
+              // for `error` because there is no decision to reflect, and for
+              // `held` because hold means leave the PR alone.
+              if (decision.verdict !== 'held' && decision.verdict !== 'error') {
+                try {
+                  await setNeedsReview(pr, decision.needsReview);
+                } catch (err) {
+                  core.warning(
+                    `#${pr.number}: could not update \`${NEEDS_REVIEW_LABEL}\`: ${err.status || ''} ${err.message}`.trim(),
+                  );
+                }
+              }
+              core.info(`#${pr.number} ${decision.verdict}: ${decision.detail} → ${action}`);
+              rows.push([
+                `<a href="${pr.html_url}">#${pr.number}</a> ${pr.title}`,
+                decision.verdict,
+                decision.detail,
+                action,
+              ]);
+            }
+
+            core.summary.addHeading(DRY_RUN ? 'Dependabot triage (DRY RUN)' : 'Dependabot triage', 2).addTable(rows);
+            await core.summary.write();
+
+            // An `error` row means this run reached no decision for that PR,
+            // and it is the one unmergeable outcome with nothing on the PR to
+            // notice: the throw skips setNeedsReview (it sits after act inside
+            // the try), so there is no label and no comment — just a warning
+            // annotation on an otherwise green run.
+            //
+            // A transient 5xx clears itself on the next sweep. A standing cause
+            // — a locked PR 403ing createComment, a persistent failure reading
+            // one PR — would be retried and swallowed every day forever. This
+            // file already argues (see CI_CANNOT_VOUCH_FOR) that a RED run here
+            // is too quiet to rely on, because a scheduled run's failure
+            // attaches to no PR; a GREEN one carrying a warning cannot be the
+            // whole story. Failing is the louder of the two available states,
+            // and it costs nothing already done — the summary is written above
+            // and the merges have already happened.
+            const errored = rows.slice(1).filter((r) => r[1] === 'error');
+            if (errored.length) {
+              core.setFailed(
+                `triage reached no decision for ${errored.length} PR(s) — see the warnings above and the summary table.`,
+              );
+            }

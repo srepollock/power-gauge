@@ -1,4 +1,4 @@
-# Consumer workflow for srepollock/ci-toolkit ai-triage.yml
+# Caller for the vendored ci-toolkit reusable (reusable-ai-triage.yml).
 name: ai-triage
 
 on:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   triage:
-    uses: srepollock/ci-toolkit/.github/workflows/ai-triage.yml@v1
+    uses: ./.github/workflows/reusable-ai-triage.yml
     permissions:
       contents: read
       issues: write

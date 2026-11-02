@@ -1,4 +1,4 @@
-# Consumer workflow for srepollock/ci-toolkit ai-review.yml
+# Caller for the vendored ci-toolkit reusable (reusable-ai-review.yml).
 name: ai-review
 
 on:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   review:
-    uses: srepollock/ci-toolkit/.github/workflows/ai-review.yml@v1
+    uses: ./.github/workflows/reusable-ai-review.yml
     permissions:
       contents: read
       pull-requests: write
