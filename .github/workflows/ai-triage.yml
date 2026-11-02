@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   triage:
-    uses: srepollock/ci-toolkit/.github/workflows/ai-triage.yml@v0
+    uses: srepollock/ci-toolkit/.github/workflows/ai-triage.yml@v1
     permissions:
       contents: read
       issues: write
@@ -20,4 +20,3 @@ jobs:
       max_turns: 15
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      PROJECTS_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
