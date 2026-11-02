@@ -113,3 +113,5 @@ Open the Control Center via the System Tray icon or the HUD gear button (`⚙`) 
    - Enable **"Include Separate Logical Volume Gauges (C:, D:...)"** if you want partition gauges alongside Physical Drive gauges (`DISK 0`, `DISK 1`...).
    - Enable **"Show All Active Network Interfaces"** to display separate gauges for Ethernet, Wi-Fi, and virtual adapters.
    - Customize every discovered hardware gauge individually: show/hide (`Eye` icon), override **Style**, override **Scale**, pick **Dial Metric/Scale**, choose a **Custom Accent Color**, or **Tear Off / Dock** its window.
+
+<!-- ai-review smoke test; this PR will be closed unmerged -->
