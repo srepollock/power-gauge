@@ -22,7 +22,7 @@
         {
           "type": "toml",
           "path": "src-tauri/Cargo.lock",
-          "jsonpath": "$.package[?(@.name=='power-gauge-hud')].version"
+          "jsonpath": "$.package[?(@.name.value=='power-gauge-hud')].version"
         }
       ]
     }
