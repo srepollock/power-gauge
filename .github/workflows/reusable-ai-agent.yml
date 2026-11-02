@@ -1,4 +1,5 @@
-# Vendored from srepollock/ci-toolkit v1.1.0 (58af871), unmodified below this header.
+# Vendored from srepollock/ci-toolkit v1.1.0 (58af871), unmodified below this header
+# except the "Refuse fork pull requests" step (power-gauge addition).
 # ci-toolkit is private and a public repo cannot call its reusable workflows, so this
 # repo keeps its own copy. Called by ai-agent.yml; edit here, not upstream.
 # ============================================================================
@@ -128,6 +129,22 @@ jobs:
             none|python|node) ;;
             *) echo "::error::unknown setup '$SETUP' (expected: none, python, node)"; exit 1 ;;
           esac
+
+      # power-gauge addition, not upstream. On a public repo a collaborator's
+      # @claude on a fork PR passes the access gate, and the agent would then run
+      # the fork's npm scripts holding this job's write token and OAuth token.
+      - name: Refuse fork pull requests
+        if: github.event.issue.pull_request || github.event.pull_request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          head_repo="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.head.repo.full_name // ""')"
+          if [[ "$head_repo" != "$REPO" ]]; then
+            echo "::error::PR #$PR_NUMBER is from '${head_repo:-a deleted fork}'; the agent only runs on branches in $REPO."
+            exit 1
+          fi
 
       - name: Checkout repository
         uses: actions/checkout@v7
