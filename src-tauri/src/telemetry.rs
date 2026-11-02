@@ -129,28 +129,40 @@ pub struct WinGpuPerf {
 
 pub struct TelemetryCollector {
     sys: System,
-    disks: Disks,
-    networks: Networks,
-    components: Components,
+    // Optional sources: sysinfo 0.40 made their constructors fallible. A failure (e.g. WMI
+    // unavailable for components) degrades to an empty list, matching sysinfo 0.33's behaviour.
+    disks: Option<Disks>,
+    networks: Option<Networks>,
+    components: Option<Components>,
     nvml: Option<Nvml>,
     last_tick: Instant,
     net_peak_bps: HashMap<String, f64>,
     win_perf_cache: Arc<Mutex<WinPerfSidecarData>>,
 }
 
+fn optional_source<T>(name: &str, init: Result<T, sysinfo::Error>) -> Option<T> {
+    match init {
+        Ok(source) => Some(source),
+        Err(err) => {
+            eprintln!("telemetry: {name} unavailable, reporting none: {err}");
+            None
+        }
+    }
+}
+
 impl TelemetryCollector {
-    pub fn new() -> Self {
-        let mut sys = System::new_all();
+    pub fn new() -> Result<Self, sysinfo::Error> {
+        let mut sys = System::new_all()?;
         sys.refresh_all();
-        let disks = Disks::new_with_refreshed_list();
-        let networks = Networks::new_with_refreshed_list();
-        let components = Components::new_with_refreshed_list();
+        let disks = optional_source("disks", Disks::new_with_refreshed_list());
+        let networks = optional_source("networks", Networks::new_with_refreshed_list());
+        let components = optional_source("components", Components::new_with_refreshed_list());
         let nvml = Nvml::init().ok();
 
         let win_perf_cache = Arc::new(Mutex::new(WinPerfSidecarData::default()));
         spawn_windows_perf_poller(win_perf_cache.clone());
 
-        Self {
+        Ok(Self {
             sys,
             disks,
             networks,
@@ -159,7 +171,7 @@ impl TelemetryCollector {
             last_tick: Instant::now(),
             net_peak_bps: HashMap::new(),
             win_perf_cache,
-        }
+        })
     }
 
     pub fn sample(&mut self) -> SystemTelemetry {
@@ -169,9 +181,15 @@ impl TelemetryCollector {
 
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
-        self.disks.refresh(true);
-        self.networks.refresh(true);
-        self.components.refresh(true);
+        if let Some(disks) = self.disks.as_mut() {
+            disks.refresh(true);
+        }
+        if let Some(networks) = self.networks.as_mut() {
+            networks.refresh(true);
+        }
+        if let Some(components) = self.components.as_mut() {
+            components.refresh(true);
+        }
 
         let win_perf = self
             .win_perf_cache
@@ -203,7 +221,7 @@ impl TelemetryCollector {
     fn collect_cpu(&self) -> CpuTelemetry {
         let cpus = self.sys.cpus();
         let usage_percent = self.sys.global_cpu_usage() as f64;
-        let per_core_percent: Vec<f64> = cpus.iter().map(|c| c.cpu_usage() as f64).collect();
+        let per_core_percent: Vec<f64> = cpus.iter().map(|c| c.usage() as f64).collect();
         let frequency_mhz = cpus
             .first()
             .map(|c| c.frequency())
@@ -212,12 +230,12 @@ impl TelemetryCollector {
             .first()
             .map(|c| c.brand().to_string())
             .unwrap_or_else(|| "System Processor".to_string());
-        let physical_cores = self.sys.physical_core_count().unwrap_or(cpus.len());
+        let physical_cores = System::physical_core_count().unwrap_or(cpus.len());
         let logical_cores = cpus.len();
         let process_count = self.sys.processes().len();
 
         let mut temperature_c: Option<f64> = None;
-        for comp in &self.components {
+        for comp in self.components.iter().flatten() {
             let lbl = comp.label().to_lowercase();
             if lbl.contains("cpu") || lbl.contains("package") || lbl.contains("core") || lbl.contains("tdie") {
                 if let Some(t) = comp.temperature() {
@@ -280,7 +298,7 @@ impl TelemetryCollector {
 
         // Map sysinfo disks into logical volumes first
         let mut logical_disks: Vec<DiskTelemetry> = Vec::new();
-        for (idx, d) in self.disks.iter().enumerate() {
+        for (idx, d) in self.disks.iter().flat_map(|disks| disks.iter()).enumerate() {
             let mount = d.mount_point().to_string_lossy().to_string();
             let clean_mount = mount.trim_end_matches('\\').to_string();
             let total_b = d.total_space() as f64;
@@ -396,7 +414,8 @@ impl TelemetryCollector {
     fn collect_networks(&mut self, dt: f64) -> Vec<NetworkTelemetry> {
         let mut list: Vec<NetworkTelemetry> = Vec::new();
 
-        for (iface_name, data) in &self.networks {
+        for (iface_os_name, data) in self.networks.iter().flatten() {
+            let iface_name = iface_os_name.to_string_lossy().into_owned();
             let lower = iface_name.to_lowercase();
             if lower.contains("loopback")
                 || lower.contains("pseudo")
@@ -429,7 +448,7 @@ impl TelemetryCollector {
             // Auto-scaling ceiling (minimum 5 MB/s ceiling so small traffic doesn't peg 100%, decays gently)
             let prev_peak = self
                 .net_peak_bps
-                .get(iface_name)
+                .get(&iface_name)
                 .copied()
                 .unwrap_or(5.0 * 1024.0 * 1024.0);
             let new_peak = (prev_peak * 0.985)
@@ -681,7 +700,7 @@ mod tests {
 
     #[test]
     fn test_telemetry_collector_sample_bounds_and_schema() {
-        let mut collector = TelemetryCollector::new();
+        let mut collector = TelemetryCollector::new().expect("init collector");
         let snap = collector.sample();
 
         assert!(snap.cpu.usage_percent >= 0.0 && snap.cpu.usage_percent <= 100.0);

@@ -6,7 +6,7 @@ This file is automatically loaded in new agent sessions to provide complete proj
 
 ## 1. Project Overview & Core Product Philosophy
 
-**PowerGauge HUD** is a Windows floating desktop system performance monitor built with **Tauri v2 (Rust + React 18 / TypeScript / SVG)**. It displays real-time hardware telemetry (`CPU`, `MEMORY`, `DISK N`, `ETHERNET`, `GPU N`) in customizable power gauges on the desktop, supports tearing off individual gauges into standalone floating windows, and integrates with both the Windows System Tray and Taskbar.
+**PowerGauge HUD** is a Windows floating desktop system performance monitor built with **Tauri v2 (Rust + React 19 / TypeScript / SVG)**. It displays real-time hardware telemetry (`CPU`, `MEMORY`, `DISK N`, `ETHERNET`, `GPU N`) in customizable power gauges on the desktop, supports tearing off individual gauges into standalone floating windows, and integrates with both the Windows System Tray and Taskbar.
 
 ### Guiding User Alignment Principle
 During the initial `/grill-me` design interview (documented in [`docs/DECISIONS.md`](./docs/DECISIONS.md)), the user established a core product philosophy:
