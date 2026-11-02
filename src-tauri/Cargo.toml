@@ -3,6 +3,8 @@ name = "power-gauge-hud"
 version = "0.1.0"
 description = "Floating System Performance Power Gauges Desktop HUD"
 authors = ["PowerGauge"]
+license = "Apache-2.0"
+repository = "https://github.com/srepollock/power-gauge"
 edition = "2021"
 
 [features]

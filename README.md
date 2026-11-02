@@ -169,3 +169,9 @@ floating_system_monitor_app/
 ├── tsconfig.json
 └── vite.config.ts
 ```
+
+---
+
+## License
+
+Licensed under the [Apache License, Version 2.0](./LICENSE).
