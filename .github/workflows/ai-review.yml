@@ -5,12 +5,16 @@ on:
   pull_request:
     types: [opened, ready_for_review, reopened, synchronize, labeled]
 
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
   review:
-    uses: srepollock/ci-toolkit/.github/workflows/ai-review.yml@v0
+    uses: srepollock/ci-toolkit/.github/workflows/ai-review.yml@v1
     permissions:
       contents: read
       pull-requests: write
