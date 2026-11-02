@@ -439,7 +439,7 @@ fn main() {
             let saved_settings = load_settings_from_disk(&config_path);
 
             let shared = Arc::new(SharedState {
-                collector: Mutex::new(TelemetryCollector::new()),
+                collector: Mutex::new(TelemetryCollector::new()?),
                 state: Mutex::new(AppStateData {
                     settings: saved_settings.clone(),
                     polling_interval_ms: 1000,
