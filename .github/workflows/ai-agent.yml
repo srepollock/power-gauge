@@ -32,5 +32,8 @@ jobs:
       # .nvmrc + package-lock.json → npm ci. The agent runs on ubuntu-latest,
       # so it can typecheck, test and build the frontend but not the Tauri Rust side.
       setup: node
+      # The action's default tool set has no Bash. setup: node already ran npm ci. Edit + npm scripts
+      # is arbitrary execution in this job; the reusable's OWNER/MEMBER/COLLABORATOR gate is the control.
+      allowed_tools: "Read,Edit,Write,Glob,Grep,LS,Bash(npm run typecheck),Bash(npm test),Bash(npm run build)"
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
