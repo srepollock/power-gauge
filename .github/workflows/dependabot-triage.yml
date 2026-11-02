@@ -1,0 +1,40 @@
+# Consumer workflow for srepollock/ci-toolkit dependabot-triage.yml
+# Gates on the ci.yml run for each PR's head SHA. Merges land on development,
+# which is Dependabot's target-branch.
+name: dependabot-triage
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: ["dependabot/**"]
+  schedule:
+    - cron: "0 13 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        type: boolean
+        default: false
+
+concurrency:
+  group: dependabot-triage
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  triage:
+    uses: srepollock/ci-toolkit/.github/workflows/dependabot-triage.yml@v1
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+      checks: read
+      statuses: read
+    with:
+      ci_workflow: ci.yml
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+    secrets:
+      DEPENDABOT_MERGE_TOKEN: ${{ secrets.DEPENDABOT_MERGE_TOKEN }}

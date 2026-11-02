@@ -1,0 +1,102 @@
+# Follows the srepollock/ci-toolkit release-please + consumer binary packaging pattern:
+# 1. release-please manages Release PRs on trunk/main and updates package.json,
+#    src-tauri/tauri.conf.json, src-tauri/Cargo.toml, and CHANGELOG.md.
+# 2. When release_created == 'true' (or on manual workflow_dispatch),
+#    build-windows-release compiles the Tauri Windows installers & portable exe
+#    and uploads them to the GitHub Release.
+name: release
+
+on:
+  push:
+    branches: [trunk, main]
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Build Windows release artifacts even without a new release-please tag"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Ready to switch to `uses: srepollock/ci-toolkit/.github/workflows/release-please.yml@v0`
+  # once release-please.yml is implemented in srepollock/ci-toolkit.
+  release-please:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build-windows-release:
+    name: Build Windows Installers (.exe, .msi, Portable & SHA256SUMS)
+    needs: [release-please]
+    if: |
+      always() &&
+      (needs.release-please.outputs.release_created == 'true' ||
+       (github.event_name == 'workflow_dispatch' && inputs.force_build == true))
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name || github.ref }}
+
+      - name: Setup Node.js from .nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust Cargo Registry & Target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run Unit Tests (Node + Rust)
+        run: |
+          npm test
+          cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Build Tauri Release & Windows Installers
+        shell: pwsh
+        run: ./scripts/build-release.ps1 -BundleInstallers
+
+      - name: Upload Release Artifacts to Workflow Run
+        uses: actions/upload-artifact@v4
+        with:
+          name: PowerGauge-HUD-Windows-Release
+          path: release/v*/*
+
+      - name: Attach Artifacts to GitHub Release
+        if: needs.release-please.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        shell: pwsh
+        run: |
+          gh release upload "$env:RELEASE_TAG" release/v*/* --clobber

@@ -1,0 +1,70 @@
+# Aligned with srepollock/ci-toolkit consumer conventions:
+# - dependabot-triage@v1 gates on this workflow's run for each PR's head SHA. It does not
+#   dispatch CI after merges; set DEPENDABOT_MERGE_TOKEN so its merges trigger push CI.
+# - Top-level least-privilege permissions
+# - Runs the node-ci contract (typecheck, test, build) + Tauri Rust check & tests
+name: ci
+
+on:
+  push:
+    branches: [trunk, development, main, master]
+  pull_request:
+    branches: [trunk, development, main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Stays repo-local: ci-toolkit's planned node-ci.yml (1.x) won't cover the Windows + Tauri matrix.
+
+  verify-windows:
+    name: Node CI (typecheck, test, build) & Tauri Rust Suite
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js from .nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust Cargo Registry & Target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify Version Parity Across Manifests
+        shell: pwsh
+        run: |
+          $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauri = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $rp = (Get-Content .release-please-manifest.json -Raw | ConvertFrom-Json).'.'
+          $cargo = ([regex]::Match((Get-Content src-tauri/Cargo.toml -Raw), '(?m)^version\s*=\s*"([^"]+)"')).Groups[1].Value
+          if (($pkg -ne $tauri) -or ($pkg -ne $cargo) -or ($pkg -ne $rp)) {
+            throw "Version mismatch: package.json=$pkg, tauri.conf.json=$tauri, Cargo.toml=$cargo, .release-please-manifest.json=$rp"
+          }
+          Write-Host "Version parity verified: v$pkg"
+
+      - name: Run TypeScript Typecheck
+        run: npm run typecheck
+
+      - name: Run Frontend Unit Tests
+        run: npm test
+
+      - name: Build Production Frontend Bundle (dist/)
+        run: npm run build
+
+      - name: Run Rust Unit Tests & Check Compilation
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
