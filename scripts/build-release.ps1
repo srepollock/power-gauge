@@ -88,11 +88,14 @@ try {
     $portableDest = Join-Path $releaseDir $portableName
     Copy-Item -Path $builtExe -Destination $portableDest -Force
 
-    # Copy any NSIS (.exe) or WiX (.msi) installers if present
+    # Copy any NSIS (.exe) or WiX (.msi) installers if present. Tauri names them after
+    # productName ("PowerGauge HUD_..."), and GitHub turns spaces in asset names into dots,
+    # which would break SHA256SUMS.txt lookups, so stage them without spaces.
     $bundleRoot = Join-Path $RepoRoot "src-tauri\target\release\bundle"
     if (Test-Path $bundleRoot) {
         Get-ChildItem -Path $bundleRoot -Recurse -Include "*.exe", "*.msi" | ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination (Join-Path $releaseDir $_.Name) -Force
+            $stagedName = $_.Name -replace ' ', '-'
+            Copy-Item -Path $_.FullName -Destination (Join-Path $releaseDir $stagedName) -Force
         }
     }
 

@@ -4,6 +4,31 @@
 
 ---
 
+## Install
+
+Download the latest build from **[Releases](https://github.com/srepollock/power-gauge/releases/latest)**. Each release includes:
+
+| Asset | Use it when |
+|---|---|
+| `PowerGauge-HUD_<version>_x64-setup.exe` (NSIS) | You want a normal install for your user account: no admin rights, Start menu entry and uninstaller. |
+| `PowerGauge-HUD_<version>_x64_en-US.msi` | You deploy with Windows Installer tooling (Intune, Group Policy, `msiexec`). |
+| `PowerGauge-HUD-v<version>-win64-portable.exe` | You want a single file with nothing installed. |
+| `SHA256SUMS.txt` | You want to verify a download. |
+
+**Requirements:** Windows 10 or 11, 64-bit, with the Microsoft Edge WebView2 Runtime. WebView2 ships with Windows 11 and current Windows 10. The installers download it if it's missing, but the portable exe doesn't. NVIDIA GPU metrics come from the NVIDIA driver (NVML). AMD, Intel and integrated GPUs are read through Windows performance counters.
+
+**Unsigned binaries:** releases aren't code-signed yet, so SmartScreen may show *Windows protected your PC*. Check the checksum, then choose **More info → Run anyway**.
+
+**Verify a download** (PowerShell, in the download folder):
+
+```powershell
+$file = "PowerGauge-HUD-v0.2.0-win64-portable.exe"
+$expected = (Select-String -Path .\SHA256SUMS.txt -Pattern $file -SimpleMatch).Line.Split(" ")[0]
+(Get-FileHash $file -Algorithm SHA256).Hash -eq $expected   # True = intact
+```
+
+---
+
 ## Documentation & ADR Index
 
 - **[Agent Context & Rules (`AGENTS.md`)](./AGENTS.md)** — Automatically loaded in new sessions to provide full architectural context, build rules, and invariants.
@@ -70,11 +95,11 @@ Switch all gauges globally or override each gauge individually:
 
 ---
 
-## Quick Start & Building
+## Building from Source
 
 ### Prerequisites
 - **Windows 10 / 11** (64-bit)
-- **Node.js** `v20+` and **npm**
+- **Node.js** 22 (see `.nvmrc`) and **npm**
 - **Rust & Cargo** (`rustup` with `x86_64-pc-windows-msvc` and Visual Studio C++ Build Tools)
 
 ### Run the Compiled Standalone Executable
