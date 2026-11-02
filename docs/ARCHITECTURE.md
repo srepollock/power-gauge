@@ -6,7 +6,7 @@ This document details the internal architecture, hardware telemetry pipeline, mu
 
 ## 1. High-Level System Architecture
 
-PowerGauge HUD is a **Tauri v2** application combining a native **Rust** backend with a **React 18 + TypeScript + SVG** frontend. All window views (`main` dock, `detached-<id>` single-gauge windows, and `settings` control center) are served from the same compiled single-page bundle (`index.html`), routed via URL query parameters (`?window=dock`, `?window=detached&gaugeId=...`, `?window=settings`).
+PowerGauge HUD is a **Tauri v2** application combining a native **Rust** backend with a **React 19 + TypeScript + SVG** frontend. All window views (`main` dock, `detached-<id>` single-gauge windows, and `settings` control center) are served from the same compiled single-page bundle (`index.html`), routed via URL query parameters (`?window=dock`, `?window=detached&gaugeId=...`, `?window=settings`).
 
 ```mermaid
 flowchart TB
