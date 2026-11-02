@@ -72,8 +72,8 @@ After running `npm run release:build` (or `npm run release:bundle`), inspect the
 ```text
 release/v0.1.0/
 ├── PowerGauge-HUD-v0.1.0-win64-portable.exe   # Self-contained single-file portable executable
-├── PowerGauge HUD_0.1.0_x64-setup.exe         # NSIS Windows Setup Installer (when -BundleInstallers is used)
-├── PowerGauge HUD_0.1.0_x64_en-US.msi         # Windows MSI Installer (when -BundleInstallers is used)
+├── PowerGauge-HUD_0.1.0_x64-setup.exe         # NSIS Windows Setup Installer (when -BundleInstallers is used)
+├── PowerGauge-HUD_0.1.0_x64_en-US.msi         # Windows MSI Installer (when -BundleInstallers is used)
 └── SHA256SUMS.txt                             # Cryptographic SHA-256 hashes & file sizes
 ```
 

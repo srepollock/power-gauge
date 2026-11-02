@@ -10,8 +10,8 @@ Download the latest build from **[Releases](https://github.com/srepollock/power-
 
 | Asset | Use it when |
 |---|---|
-| `…_x64-setup.exe` (NSIS) | You want a normal install for your user account: no admin rights, Start menu entry and uninstaller. |
-| `…_x64_en-US.msi` | You deploy with Windows Installer tooling (Intune, Group Policy, `msiexec`). |
+| `PowerGauge-HUD_<version>_x64-setup.exe` (NSIS) | You want a normal install for your user account: no admin rights, Start menu entry and uninstaller. |
+| `PowerGauge-HUD_<version>_x64_en-US.msi` | You deploy with Windows Installer tooling (Intune, Group Policy, `msiexec`). |
 | `PowerGauge-HUD-v<version>-win64-portable.exe` | You want a single file with nothing installed. |
 | `SHA256SUMS.txt` | You want to verify a download. |
 
