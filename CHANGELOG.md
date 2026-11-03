@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1](https://github.com/srepollock/power-gauge/compare/v0.2.0...v0.2.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **release:** build dist before cargo test and attach assets reliably ([#44](https://github.com/srepollock/power-gauge/issues/44)) ([#45](https://github.com/srepollock/power-gauge/issues/45)) ([74d9747](https://github.com/srepollock/power-gauge/commit/74d97475061466230a9d34389dbc0c7bc8291f4b))
+
 ## [0.2.0](https://github.com/srepollock/power-gauge/compare/v0.1.0...v0.2.0) (2026-11-03)
 
 
