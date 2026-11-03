@@ -4,6 +4,8 @@
 # 2. When release_created == 'true' (or on manual workflow_dispatch),
 #    build-windows-release compiles the Tauri Windows installers & portable exe
 #    and uploads them to the GitHub Release.
+# 3. To (re)build an existing release, dispatch with `tag` (e.g. v0.2.0): the
+#    tag's source is built and its assets are attached to that release.
 name: release
 
 on:
@@ -15,6 +17,10 @@ on:
         description: "Build Windows release artifacts even without a new release-please tag"
         type: boolean
         default: true
+      tag:
+        description: "Existing release tag to build and attach assets to (e.g. v0.2.0). Empty = build the dispatched ref without attaching."
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -47,7 +53,7 @@ jobs:
     if: |
       always() &&
       (needs.release-please.outputs.release_created == 'true' ||
-       (github.event_name == 'workflow_dispatch' && inputs.force_build == true))
+       (github.event_name == 'workflow_dispatch' && (inputs.force_build == true || inputs.tag != '')))
     runs-on: windows-latest
     permissions:
       contents: write
@@ -56,7 +62,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-please.outputs.tag_name || github.ref }}
+          ref: ${{ needs.release-please.outputs.tag_name || inputs.tag || github.ref }}
 
       - name: Setup Node.js from .nvmrc
         uses: actions/setup-node@v7
@@ -75,10 +81,18 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Run Unit Tests (Node + Rust)
-        run: |
-          npm test
-          cargo test --manifest-path src-tauri/Cargo.toml --locked
+      # One command per step: a multi-line pwsh step only fails on the last
+      # command's exit code.
+      - name: Run Frontend Unit Tests
+        run: npm test
+
+      # tauri::generate_context!() embeds ../dist at compile time, so the
+      # frontend bundle must exist before any cargo build or test.
+      - name: Build Production Frontend Bundle (dist/)
+        run: npm run build
+
+      - name: Run Rust Unit Tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
 
       - name: Build Tauri Release & Windows Installers
         shell: pwsh
@@ -91,10 +105,18 @@ jobs:
           path: release/v*/*
 
       - name: Attach Artifacts to GitHub Release
-        if: needs.release-please.outputs.release_created == 'true'
+        if: needs.release-please.outputs.release_created == 'true' || inputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name || inputs.tag }}
         shell: pwsh
         run: |
-          gh release upload "$env:RELEASE_TAG" release/v*/* --clobber
+          # build-release.ps1 stages into release/v<package.json version>, so this
+          # also fails if the tag doesn't match the version that was built.
+          $dir = Join-Path "release" $env:RELEASE_TAG
+          if (-not (Test-Path $dir)) { throw "No staged artifacts in $dir for tag $env:RELEASE_TAG" }
+          # Native commands don't expand globs in pwsh; pass explicit paths.
+          $files = @(Get-ChildItem -Path $dir -File | ForEach-Object { $_.FullName })
+          if ($files.Count -eq 0) { throw "No files to upload in $dir" }
+          gh release upload $env:RELEASE_TAG @files --clobber
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed ($LASTEXITCODE)" }
