@@ -17,6 +17,7 @@ During the initial `/grill-me` design interview (documented in [`docs/DECISIONS.
 ## 2. Documentation & ADR Index (Read Before Modifying Core Systems)
 
 - **Product & Design Decisions**: [`docs/DECISIONS.md`](./docs/DECISIONS.md) — Complete record of user requirements from the discovery interview.
+- **Roadmap**: [`ROADMAP.md`](./ROADMAP.md). Planned work by release; update it when an item ships or is filed.
 - **Architecture Decision Records (`docs/adr/`)**:
   - [`docs/adr/README.md`](./docs/adr/README.md) — ADR index and maintenance rules.
   - [`docs/adr/0001-tauri-v2-rust-react-svg-stack.md`](./docs/adr/0001-tauri-v2-rust-react-svg-stack.md) — Tauri v2 + Rust + React/SVG stack and `custom-protocol` standalone binary embedding.
