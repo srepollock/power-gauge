@@ -33,6 +33,7 @@ $expected = (Select-String -Path .\SHA256SUMS.txt -Pattern $file -SimpleMatch).L
 
 - **[Agent Context & Rules (`AGENTS.md`)](./AGENTS.md)** — Automatically loaded in new sessions to provide full architectural context, build rules, and invariants.
 - **[Product & Design Decision Log (`docs/DECISIONS.md`)](./docs/DECISIONS.md)** — Complete record of product requirements and alignment decisions from the initial `/grill-me` discovery interview.
+- **[Roadmap (`ROADMAP.md`)](./ROADMAP.md)**: Planned work by release, with shipped versions.
 - **[Architecture Decision Records (`docs/adr/`)](./docs/adr/README.md)**:
   - **[ADR-0001](./docs/adr/0001-tauri-v2-rust-react-svg-stack.md)** — Tauri v2 (Rust + React/TypeScript/SVG) Stack & `custom-protocol` embedding.
   - **[ADR-0002](./docs/adr/0002-hybrid-dock-and-tear-off-multi-window-architecture.md)** — Hybrid Dock and Tear-Off Multi-Window Architecture.
