@@ -6,14 +6,14 @@ The product rule from [`docs/DECISIONS.md`](./docs/DECISIONS.md) applies to ever
 
 ## Shipped
 
-### v0.2.0 (2026-11-03): first public release
+### v0.2.0 (published 2026-11-03): first public release
 - Floating dock with tear-off gauges, the full desktop suite window, four SVG gauge styles, and tray, taskbar and Ghost Mode integration
 - Telemetry for CPU, memory, disks, network and GPUs (sysinfo, NVML, and Windows performance counters off the sampling thread)
 - Windows installers (NSIS and MSI), a portable exe and `SHA256SUMS.txt` on every release
 - Toolchain: React 19, Vite 8, TypeScript 7, sysinfo 0.40
 - Licensed Apache-2.0
 
-### v0.2.1 (2026-11-05)
+### v0.2.1 (published 2026-11-05; the CHANGELOG entry is dated 2026-11-03, when the Release PR was cut)
 - Release pipeline: the frontend is built before Rust tests, assets attach reliably, and a dispatch can rebuild an existing tag (#44)
 
 ## Next: v0.2.2
@@ -28,4 +28,4 @@ The product rule from [`docs/DECISIONS.md`](./docs/DECISIONS.md) applies to ever
 - Broaden tests. Today there are 5 frontend tests (the telemetry adapter) and 1 Rust test (live sampling bounds and schema). Window management, IPC commands and settings persistence are untested (*unfiled*).
 
 ## Housekeeping
-- The v0.2.0 release notes repeat two entries, and their compare link points at a `v0.1.0` tag that doesn't exist. Cosmetic.
+- `CHANGELOG.md` and the v0.2.0 release notes repeat three entries, the v0.2.0 compare link points at a `v0.1.0` tag that doesn't exist, and a leftover `## [Unreleased]` header sits between 0.2.0 and 0.1.0. Cosmetic.
