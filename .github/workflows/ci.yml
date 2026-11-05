@@ -54,10 +54,13 @@ jobs:
           $cargo = ([regex]::Match((Get-Content src-tauri/Cargo.toml -Raw), '(?m)^version\s*=\s*"([^"]+)"')).Groups[1].Value
           $cargoLock = ([regex]::Match((Get-Content src-tauri/Cargo.lock -Raw), '(?m)^name = "power-gauge-hud"\r?\nversion = "([^"]+)"')).Groups[1].Value
           # Regex, not ConvertFrom-Json: the lockfile's `packages[""]` key breaks it.
-          $pkgLock = ([regex]::Match((Get-Content package-lock.json -Raw), '(?m)^  "version":\s*"([^"]+)"')).Groups[1].Value
+          $pkgLockRaw = Get-Content package-lock.json -Raw
+          $pkgLock = ([regex]::Match($pkgLockRaw, '(?m)^  "version":\s*"([^"]+)"')).Groups[1].Value
+          $pkgLockRoot = ([regex]::Match($pkgLockRaw, '(?s)"packages":\s*\{\s*"":\s*\{.*?"version":\s*"([^"]+)"')).Groups[1].Value
           $versions = [ordered]@{
             'tauri.conf.json' = $tauri; 'Cargo.toml' = $cargo; 'Cargo.lock' = $cargoLock
-            'package-lock.json' = $pkgLock; '.release-please-manifest.json' = $rp
+            'package-lock.json' = $pkgLock; 'package-lock.json packages[""]' = $pkgLockRoot
+            '.release-please-manifest.json' = $rp
           }
           $drift = @($versions.GetEnumerator() | Where-Object { $_.Value -ne $pkg })
           if ($drift.Count -gt 0) {

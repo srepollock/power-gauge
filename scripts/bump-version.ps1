@@ -49,6 +49,11 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
 
 Write-Host "Bumping PowerGauge HUD version: $currentVersion -> $Version" -ForegroundColor Cyan
 
+# Validate the Cargo.lock entry before writing anything, so a miss can't leave a partial bump.
+$lockRaw = Get-Content $CargoLockPath -Raw
+$lockPattern = '(?m)(^name = "power-gauge-hud"\r?\nversion = )"[^"]+"'
+if (-not [regex]::IsMatch($lockRaw, $lockPattern)) { throw "power-gauge-hud entry not found in $CargoLockPath" }
+
 # 1. Update package.json and package-lock.json (npm owns both root version fields)
 Push-Location $RepoRoot
 try {
@@ -69,9 +74,6 @@ $cargoRaw = [regex]::Replace($cargoRaw, '(?m)^version\s*=\s*"[^"]+"', "version =
 Set-Content -Path $CargoTomlPath -Value $cargoRaw -NoNewline
 
 # 3a. Update the root package's entry in src-tauri/Cargo.lock, or `cargo test --locked` fails
-$lockRaw = Get-Content $CargoLockPath -Raw
-$lockPattern = '(?m)(^name = "power-gauge-hud"\r?\nversion = )"[^"]+"'
-if (-not [regex]::IsMatch($lockRaw, $lockPattern)) { throw "power-gauge-hud entry not found in $CargoLockPath" }
 $lockRaw = [regex]::Replace($lockRaw, $lockPattern, "`${1}`"$Version`"", 1)
 Set-Content -Path $CargoLockPath -Value $lockRaw -NoNewline
 
