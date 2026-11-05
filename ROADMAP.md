@@ -16,10 +16,10 @@ The product rule from [`docs/DECISIONS.md`](./docs/DECISIONS.md) applies to ever
 ### v0.2.1 (published 2026-11-05; the CHANGELOG entry is dated 2026-11-03, when the Release PR was cut)
 - Release pipeline: the frontend is built before Rust tests, assets attach reliably, and a dispatch can rebuild an existing tag (#44)
 
-## Next: v0.2.2
-- Manual version bumps keep both lockfiles in sync, and CI checks all six version files (#49)
+### v0.2.2 (published 2026-11-05)
+- Manual version bumps keep both lockfiles in sync, and CI checks every version field (#49)
 
-## v0.3.0: telemetry resilience
+## Next: v0.3.0: telemetry resilience
 - Retry optional sensors (disks, networks, components) that failed at startup, without blocking the sampling thread (#28)
 - Make sensor failures visible: a release build runs as a GUI app, so today's `eprintln!` output never reaches the user. Options are a log file or a status in the Control Center (*unfiled*).
 
