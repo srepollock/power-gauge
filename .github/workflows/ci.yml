@@ -52,8 +52,16 @@ jobs:
           $tauri = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $rp = (Get-Content .release-please-manifest.json -Raw | ConvertFrom-Json).'.'
           $cargo = ([regex]::Match((Get-Content src-tauri/Cargo.toml -Raw), '(?m)^version\s*=\s*"([^"]+)"')).Groups[1].Value
-          if (($pkg -ne $tauri) -or ($pkg -ne $cargo) -or ($pkg -ne $rp)) {
-            throw "Version mismatch: package.json=$pkg, tauri.conf.json=$tauri, Cargo.toml=$cargo, .release-please-manifest.json=$rp"
+          $cargoLock = ([regex]::Match((Get-Content src-tauri/Cargo.lock -Raw), '(?m)^name = "power-gauge-hud"\r?\nversion = "([^"]+)"')).Groups[1].Value
+          # Regex, not ConvertFrom-Json: the lockfile's `packages[""]` key breaks it.
+          $pkgLock = ([regex]::Match((Get-Content package-lock.json -Raw), '(?m)^  "version":\s*"([^"]+)"')).Groups[1].Value
+          $versions = [ordered]@{
+            'tauri.conf.json' = $tauri; 'Cargo.toml' = $cargo; 'Cargo.lock' = $cargoLock
+            'package-lock.json' = $pkgLock; '.release-please-manifest.json' = $rp
+          }
+          $drift = @($versions.GetEnumerator() | Where-Object { $_.Value -ne $pkg })
+          if ($drift.Count -gt 0) {
+            throw "Version mismatch with package.json=${pkg}: " + (($drift | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', ')
           }
           Write-Host "Version parity verified: v$pkg"
 

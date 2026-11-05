@@ -16,6 +16,8 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $PkgPath = Join-Path $RepoRoot "package.json"
 $TauriConfPath = Join-Path $RepoRoot "src-tauri\tauri.conf.json"
 $CargoTomlPath = Join-Path $RepoRoot "src-tauri\Cargo.toml"
+$CargoLockPath = Join-Path $RepoRoot "src-tauri\Cargo.lock"
+$PkgLockPath = Join-Path $RepoRoot "package-lock.json"
 $RpManifestPath = Join-Path $RepoRoot ".release-please-manifest.json"
 $ChangelogPath = Join-Path $RepoRoot "CHANGELOG.md"
 
@@ -47,10 +49,14 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
 
 Write-Host "Bumping PowerGauge HUD version: $currentVersion -> $Version" -ForegroundColor Cyan
 
-# 1. Update package.json
-$pkgRaw = Get-Content $PkgPath -Raw
-$pkgRaw = [regex]::Replace($pkgRaw, '"version"\s*:\s*"[^"]+"', "`"version`": `"$Version`"", 1)
-Set-Content -Path $PkgPath -Value $pkgRaw -NoNewline
+# 1. Update package.json and package-lock.json (npm owns both root version fields)
+Push-Location $RepoRoot
+try {
+    npm version $Version --no-git-tag-version --allow-same-version | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "npm version $Version failed ($LASTEXITCODE)" }
+} finally {
+    Pop-Location
+}
 
 # 2. Update src-tauri/tauri.conf.json
 $tauriRaw = Get-Content $TauriConfPath -Raw
@@ -61,6 +67,13 @@ Set-Content -Path $TauriConfPath -Value $tauriRaw -NoNewline
 $cargoRaw = Get-Content $CargoTomlPath -Raw
 $cargoRaw = [regex]::Replace($cargoRaw, '(?m)^version\s*=\s*"[^"]+"', "version = `"$Version`"", 1)
 Set-Content -Path $CargoTomlPath -Value $cargoRaw -NoNewline
+
+# 3a. Update the root package's entry in src-tauri/Cargo.lock, or `cargo test --locked` fails
+$lockRaw = Get-Content $CargoLockPath -Raw
+$lockPattern = '(?m)(^name = "power-gauge-hud"\r?\nversion = )"[^"]+"'
+if (-not [regex]::IsMatch($lockRaw, $lockPattern)) { throw "power-gauge-hud entry not found in $CargoLockPath" }
+$lockRaw = [regex]::Replace($lockRaw, $lockPattern, "`${1}`"$Version`"", 1)
+Set-Content -Path $CargoLockPath -Value $lockRaw -NoNewline
 
 # 3b. Update .release-please-manifest.json
 if (Test-Path $RpManifestPath) {
@@ -81,12 +94,13 @@ if (Test-Path $ChangelogPath) {
 }
 
 Write-Host "Successfully synchronized version $Version across:" -ForegroundColor Green
-Write-Host "  - package.json"
+Write-Host "  - package.json, package-lock.json"
 Write-Host "  - src-tauri/tauri.conf.json"
-Write-Host "  - src-tauri/Cargo.toml"
+Write-Host "  - src-tauri/Cargo.toml, src-tauri/Cargo.lock"
+Write-Host "  - .release-please-manifest.json"
 
 if ($GitTag) {
-    git add $PkgPath $TauriConfPath $CargoTomlPath $ChangelogPath
+    git add $PkgPath $PkgLockPath $TauriConfPath $CargoTomlPath $CargoLockPath $RpManifestPath $ChangelogPath
     git commit -m "chore(release): v$Version"
     git tag -a "v$Version" -m "Release v$Version"
     Write-Host "Created git commit and tag v$Version" -ForegroundColor Green
