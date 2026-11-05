@@ -8,7 +8,7 @@ This document describes the complete release lifecycle for **PowerGauge HUD**, i
 
 ```mermaid
 flowchart LR
-    Bump["1. Version Bump\n(scripts/bump-version.ps1)"] --> Manifests["Sync 3 Manifests:\n• package.json\n• src-tauri/tauri.conf.json\n• src-tauri/Cargo.toml\n+ CHANGELOG.md"]
+    Bump["1. Version Bump\n(scripts/bump-version.ps1)"] --> Manifests["Sync 6 Version Files:\n• package.json + package-lock.json\n• src-tauri/tauri.conf.json\n• src-tauri/Cargo.toml + Cargo.lock\n• .release-please-manifest.json\n+ CHANGELOG.md"]
     Manifests --> BuildFE["2. Frontend Build\n(npm run build -> dist/)"]
     BuildFE --> BuildRust["3. Rust Release Build\n(LTO + opt-level 3 + strip)"]
     BuildRust --> Stage["4. Stage Artifacts\n(release/vX.Y.Z/ + SHA256SUMS.txt)"]
@@ -19,12 +19,17 @@ flowchart LR
 
 ## 2. Version Parity Invariant
 
-In a Tauri v2 application, the semantic version (`X.Y.Z`) lives in **three** files that must always match:
+The semantic version (`X.Y.Z`) lives in **six** files that must always match:
 1. [`package.json`](../package.json) (`"version": "X.Y.Z"`)
-2. [`src-tauri/tauri.conf.json`](../src-tauri/tauri.conf.json) (`"version": "X.Y.Z"`)
-3. [`src-tauri/Cargo.toml`](../src-tauri/Cargo.toml) (`version = "X.Y.Z"`)
+2. [`package-lock.json`](../package-lock.json) (root `"version"`)
+3. [`src-tauri/tauri.conf.json`](../src-tauri/tauri.conf.json) (`"version": "X.Y.Z"`)
+4. [`src-tauri/Cargo.toml`](../src-tauri/Cargo.toml) (`version = "X.Y.Z"`)
+5. [`src-tauri/Cargo.lock`](../src-tauri/Cargo.lock) (the `power-gauge-hud` entry). A stale entry fails `cargo test --locked` in CI and in the release build.
+6. [`.release-please-manifest.json`](../.release-please-manifest.json) (`"."`)
 
-Both [`scripts/build-release.ps1`](../scripts/build-release.ps1) and [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) enforce a pre-build check that fails fast if any of the three files drift out of sync.
+release-please bumps all six in its Release PR, and `scripts/bump-version.ps1` does the same for manual bumps. [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) fails any PR or push where they drift. [`scripts/build-release.ps1`](../scripts/build-release.ps1) checks `package.json`, `tauri.conf.json` and `Cargo.toml` before building.
+
+After every release, back-merge `trunk` into `development` with a merge-commit PR. Release commits land only on `trunk`.
 
 ---
 
@@ -46,9 +51,9 @@ npm run release:bump -- -Version 0.2.0 -GitTag
 
 What `scripts/bump-version.ps1` does:
 1. Validates the target Semantic Version string.
-2. Updates `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`.
+2. Updates all six version files listed in §2. `package.json` and `package-lock.json` go through `npm version --no-git-tag-version`.
 3. Inserts a new `## [X.Y.Z] - YYYY-MM-DD` section under `## [Unreleased]` in [`CHANGELOG.md`](../CHANGELOG.md).
-4. If `-GitTag` is passed, stages the files, commits `chore(release): vX.Y.Z`, and creates annotated tag `vX.Y.Z`.
+4. If `-GitTag` is passed, stages those files and the changelog, commits `chore(release): vX.Y.Z`, and creates annotated tag `vX.Y.Z`.
 
 ---
 
