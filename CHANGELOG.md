@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.2](https://github.com/srepollock/power-gauge/compare/v0.2.1...v0.2.2) (2026-11-05)
+
+
+### Bug Fixes
+
+* **release:** bump lockfiles in bump-version.ps1 and check them in CI ([#49](https://github.com/srepollock/power-gauge/issues/49)) ([#50](https://github.com/srepollock/power-gauge/issues/50)) ([7a9358c](https://github.com/srepollock/power-gauge/commit/7a9358c3763e2a5f67991e38d9424207fbc5caca))
+
 ## [0.2.1](https://github.com/srepollock/power-gauge/compare/v0.2.0...v0.2.1) (2026-11-03)
 
 
